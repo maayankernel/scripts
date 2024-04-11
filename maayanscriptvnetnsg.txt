@@ -1,0 +1,133 @@
+# Connect to Azure Account
+Connect-AzAccount
+
+# Define variables
+$resourceGroupName = Read-Host "Enter the resource group name"
+$location = Read-Host "Enter the location (e.g., EastUS)"
+$nsgName = Read-Host "Enter the NSG name"
+$vnetName = Read-Host "Enter the VNet name"
+$vnetAddressPrefix = Read-Host "Enter the VNet address prefix (e.g., 10.0.0.0/16)"
+$subnetName = Read-Host "Enter the Subnet name"
+$subnetAddressPrefix = Read-Host "Enter the Subnet address prefix (e.g., 10.0.0.0/24)"
+$priority = 100
+
+# Create NSG function
+function Create-NSG {
+    param (
+        [string]$resourceGroupName,
+        [string]$location,
+        [string]$nsgName
+    )
+    
+    $nsgParams = @{
+        ResourceGroupName = $resourceGroupName
+        Location         = $location
+        Name             = $nsgName
+    }
+
+    $nsg = New-AzNetworkSecurityGroup @nsgParams
+    $nsg
+}
+
+# Create VNet function
+function Create-VNet {
+    param (
+        [string]$resourceGroupName,
+        [string]$location,
+        [string]$vnetName,
+        [string]$vnetAddressPrefix,
+        [string]$subnetName,
+        [string]$subnetAddressPrefix
+    )
+
+    $vnetParams = @{
+        ResourceGroupName = $resourceGroupName
+        Name              = $vnetName
+        Location          = $location
+        AddressPrefix     = $vnetAddressPrefix
+    }
+
+    $vnet = New-AzVirtualNetwork @vnetParams
+
+    $subnetParams = @{
+        Name                      = $subnetName
+        VirtualNetworkName        = $vnetName
+        ResourceGroupName         = $resourceGroupName
+        AddressPrefix             = $subnetAddressPrefix
+    }
+
+    $subnet = New-AzVirtualNetworkSubnetConfig @subnetParams
+    $vnet | Add-AzVirtualNetworkSubnetConfig -Name $subnetName -AddressPrefix $subnetAddressPrefix
+    $vnet | Set-AzVirtualNetwork
+    $subnet
+}
+
+# Create NSG rule function
+function Create-NSGRule {
+    param (
+        [string]$name,
+        [string]$protocol,
+        [int]$port,
+        [string]$direction,
+        [int]$priority
+    )
+    
+    $nsgRuleParams = @{
+        Name                     = $name
+        Protocol                 = $protocol
+        Direction                = $direction
+        Priority                 = $priority
+        SourceAddressPrefix      = "*"
+        SourcePortRange          = "*"
+        DestinationAddressPrefix = "*"
+        DestinationPortRange    = $port
+        Access                   = "Deny"
+    }
+
+    $nsgRule = New-AzNetworkSecurityRuleConfig @nsgRuleParams
+    $nsgRule
+}
+
+# Main menu
+function Show-MainMenu {
+    Write-Host "Choose a port to block:"
+    Write-Host "1. RDP/SSH (Port 3389/22)"
+    Write-Host "2. HTTP (Port 80)"
+    Write-Host "3. HTTPS (Port 443)"
+    Write-Host "4. Custom"
+}
+
+# Main script
+$nsg = Create-NSG -resourceGroupName $resourceGroupName -location $location -nsgName $nsgName
+$subnet = Create-VNet -resourceGroupName $resourceGroupName -location $location -vnetName $vnetName -vnetAddressPrefix $vnetAddressPrefix -subnetName $subnetName -subnetAddressPrefix $subnetAddressPrefix
+
+Show-MainMenu
+$choice = Read-Host "Enter your choice (1-4):"
+
+switch ($choice) {
+    1 { 
+        $nsgRule = Create-NSGRule -name "Block-RDP-SSH" -protocol "Tcp" -port 3389 -direction "Inbound" -priority $priority
+    }
+    2 { 
+        $nsgRule = Create-NSGRule -name "Block-HTTP" -protocol "Tcp" -port 80 -direction "Inbound" -priority $priority
+    }
+    3 { 
+        $nsgRule = Create-NSGRule -name "Block-HTTPS" -protocol "Tcp" -port 443 -direction "Inbound" -priority $priority
+    }
+    4 {
+        $customPort = Read-Host "Enter the custom port to block (e.g., 1234):"
+        $nsgRule = Create-NSGRule -name "Block-CustomPort" -protocol "Tcp" -port $customPort -direction "Inbound" -priority $priority
+    }
+    default { Write-Host "Invalid choice. Please enter a valid option (1-4)." }
+}
+
+# Add NSG rule
+if ($nsgRule) {
+    $nsg | Add-AzNetworkSecurityRuleConfig -NetworkSecurityRule $nsgRule
+    $nsg | Set-AzNetworkSecurityGroup
+}
+
+# Associate NSG with Subnet
+$subnet | Set-AzVirtualNetworkSubnetConfig -NetworkSecurityGroup $nsg
+$subnet | Set-AzVirtualNetwork
+Write-Host "Network Security Group '$nsgName' and Virtual Network '$vnetName' created and associated successfully!"
